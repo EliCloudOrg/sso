@@ -150,9 +150,9 @@ networks:
     name: ${SSO_GATEWAY_NETWORK}
 YAML
 
-# ---------- 2) 一次性迁移：清掉不属于本 compose 项目的同名容器 ----------
-# 切换前 sso 由 /home/docker-admin/elicloud/sso 下的 compose 项目管理，
-# compose 不允许同名的外来容器，必须先移除（之后由本项目接管，不再出现）。
+# ---------- 2) 迁移：清掉「属于另一个 compose 项目」的同名容器 ----------
+# compose 不接受同名的外来容器。本项目切换时旧项目名恰好也是 sso，compose 会自行
+# 原地重建，这里不会触发；保留它是为了别的项目名/手工创建的容器这种情形。
 if docker inspect sso >/dev/null 2>&1; then
   existing_project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' sso 2>/dev/null || true)"
   if [ "${existing_project}" != "${PROJECT_NAME}" ]; then
