@@ -22,7 +22,7 @@
 | 运行时变量 | `/srv/sso/app.env`（0600 `deploy:deploy`） |
 | 密钥 | 仓库 Actions Secret `SSH_KEY`（部署私钥）；公钥在 `/home/deploy/.ssh/authorized_keys` |
 
-## ⚠️ 本机环境的两条硬约束（决定了 `deploy.sh` 为什么长这样）
+## ⚠️ 本机环境的三条硬约束（决定了 `deploy.sh` 为什么长这样）
 
 1. **Docker 是 snap 安装的**（`/snap/bin/docker`），snap 沙箱**看不到 `/srv`**。
    任何把 `/srv` 路径交给 docker 的写法都会失败：
@@ -32,6 +32,14 @@
 2. **数据（RSA 私钥 + SQLite）留在 `/home/docker-admin/elicloud/sso/data`**，不迁移。
    迁移数据目录会让 issuer 之外的运维面（权限、uid 1002:1003、Caddy 路由）一起变动，
    收益为零、风险不为零。`deploy.sh` 只把它 bind mount 进容器。
+3. **`/home/docker-admin` 对 `deploy` 用户不可遍历**（home 目录权限如此，实测）。
+   bind mount 由 root 的 docker daemon 完成，所以容器挂载不受影响；但 `deploy.sh`
+   里**不能用 shell 去 `test -d` 数据目录**（首次部署就是这样失败过一次：
+   `[deploy] 数据目录不存在：/home/docker-admin/elicloud/sso/data`）。
+   脚本改用「借容器校验」替代 —— `docker run -v /home/docker-admin/elicloud/sso:/elicloud:ro`
+   再在容器里检查 `data/`、`jwt_private.pem`、`sso.db` 是否都在。
+   这个校验不能省：docker 会为「不存在的 bind 源」**静默创建空目录**，
+   私钥一旦缺失，应用会重新生成 RSA 密钥，所有已签发令牌立即失效。
 
 ## 部署架构
 
@@ -243,6 +251,8 @@ git push -u origin feature/xxx        # 开 PR → main，等 CI 通过并合并
 | 阶段一镜像构建报 `HTTP error 403 ... pypi.tuna.tsinghua.edu.cn` | 构建发生在 GitHub runner（境外出口 IP），清华源会间歇性 403 | Dockerfile 的 `PIP_INDEX_URL` 默认已是官方 PyPI；国内本地构建请用 `--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `docker: permission denied ... /var/run/docker.sock` | `deploy` 不在 docker 组，或改组后没重新登录 | `id deploy` 确认；`usermod -aG docker deploy` 后重新登录 |
 | `deploy.sh` 报找不到 `/srv/sso/app.env` | bootstrap 没跑或文件被删 | 重跑 `scripts/bootstrap-server.sh sso` 并填写变量 |
+| `deploy.sh` 报「数据目录不存在」 | 旧版脚本用 `test -d` 检查数据目录，而 `deploy` 用户无权遍历 `/home/docker-admin` | 现版本已改为「借容器校验」；若仍报错，检查 `/home/docker-admin/elicloud/sso/data` 是否真的还在 |
+| `deploy.sh` 报「缺少 jwt_private.pem」 | 数据目录被移动/清空 | 立刻从备份恢复 `jwt_private.pem`；**在没有私钥的情况下启动应用会让它重新生成密钥，所有已签发令牌立即失效** |
 | 容器起不来 / unhealthy | 变量缺失（`PUBLIC_BASE_URL`）、私钥路径、端口被占 | `deploy.sh` 失败时会打印 `docker logs --tail 50 sso`；也可手工 `docker logs sso` |
 | 部署成功但 `/auth/*` 仍 404 | 容器没加入 `dsh-nas_dsh-net`，或 dsh-caddy 的 Caddyfile 路由被改 | `docker inspect sso --format '{{json .NetworkSettings.Networks}}'`；检查 dsh-nas 的 Caddyfile |
 | Actions 拿不到运行时变量 | 运行时变量属于服务器 `app.env`，不在 Actions 里 | 在服务器上编辑 `/srv/sso/app.env` |

@@ -26,6 +26,9 @@ set -euo pipefail
 #      把内容写到 /home 下 docker 可见的项目目录；交给 docker 的只有 /home 路径。
 #   2. 数据（RSA 私钥 + SQLite）留在原位 /home/docker-admin/elicloud/sso/data，
 #      不随本次部署移动 —— issuer 与已签发令牌因此完全不受影响。
+#      注意 /home/docker-admin 对 deploy 用户**不可遍历**（宿主机 home 权限），
+#      所以本脚本不能用 shell 去 stat 数据目录；bind mount 由 root 的 docker daemon
+#      完成，不受影响 —— 校验改用「借容器看」的方式（见步骤 3b）。
 #
 # 回滚：Actions → Deploy to production → Run workflow → ref 填旧 ref。
 #       阶段一会按该 ref 重新构建并把 :prod 指向它，所以这里固定拉 :prod 即可
@@ -38,7 +41,8 @@ APP_ENV="${APP_DIR}/app.env"
 
 PROJECT_NAME="sso"
 PROJECT_DIR="/home/deploy/elicloud-sso"           # deploy 可写 + snap docker 可见
-DATA_DIR="/home/docker-admin/elicloud/sso/data"   # 私钥 + SQLite（容器内 /data）
+DATA_PARENT="/home/docker-admin/elicloud/sso"      # 数据目录的父目录（deploy 不可遍历）
+DATA_DIR="${DATA_PARENT}/data"                     # 私钥 + SQLite（容器内 /data）
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
 HEALTH_TIMEOUT=180                                # 秒
 
@@ -47,7 +51,9 @@ echo "[deploy] ref=${REF} dir=${APP_DIR}"
 # ---------- 0) 前置检查 ----------
 command -v docker >/dev/null 2>&1 || { echo "[deploy] 找不到 docker" >&2; exit 1; }
 [[ -f "${APP_ENV}" ]] || { echo "[deploy] 缺少运行时变量文件 ${APP_ENV}（格式见 README-deploy.md）" >&2; exit 1; }
-[[ -d "${DATA_DIR}" ]] || { echo "[deploy] 数据目录不存在：${DATA_DIR}" >&2; exit 1; }
+# 数据目录**不能**在这里用 test -d 检查：/home/docker-admin 对 deploy 用户不可遍历
+# （docker daemon 以 root 运行，bind mount 没问题，但 shell 侧的 stat 会失败）。
+# 校验挪到 docker pull 之后、用容器来做 —— 见步骤 3b。
 
 # 从 app.env 安全取值：不做 shell eval，避免值里的特殊字符被当作命令执行
 env_get() { sed -n "s/^$1=//p" "${APP_ENV}" | tail -n 1; }
@@ -165,6 +171,19 @@ fi
 
 echo "[deploy] docker pull ${IMAGE}"
 docker pull "${IMAGE}"
+
+# ---------- 3b) 校验数据卷（借容器看，deploy 用户自己无权 stat 该路径） ----------
+# 为什么必须校验：docker 会为「不存在的 bind 源」静默创建空目录，
+# 而私钥一旦缺失，应用会**重新生成 RSA 密钥** —— 所有已签发令牌立即全部失效。
+# 所以宁可在这里失败，也不能让 docker 悄悄建一个空 data 目录。
+echo "[deploy] 校验数据目录 ${DATA_DIR}"
+docker run --rm --entrypoint sh -v "${DATA_PARENT}:/elicloud:ro" "${IMAGE}" -c '
+  set -e
+  test -d /elicloud/data || { echo "缺少 /elicloud/data" >&2; exit 1; }
+  test -f /elicloud/data/jwt_private.pem || { echo "缺少 jwt_private.pem：绝不能让应用重新生成密钥" >&2; exit 1; }
+  test -f /elicloud/data/sso.db || { echo "缺少 sso.db" >&2; exit 1; }
+  echo "数据目录 OK（jwt_private.pem + sso.db 都在）"
+'
 
 # ---------- 4) 重建容器（幂等：镜像没变则 compose 不做任何事） ----------
 docker compose --project-directory "${PROJECT_DIR}" -f "${COMPOSE_FILE}" up -d
