@@ -82,13 +82,21 @@ def test_logout_without_session_renders_page(client):
 def test_logout_revokes_session_and_its_chains(client):
     tokens = sign_in_with_tokens(client)
 
-    # 精确定位本次登录创建的那个会话（测试库是共享的，不能断言全局计数）
+    # 精确定位本次登录创建的那个会话：用这次签发的 refresh token 反查它所属的 session_id。
+    # 不能取「created_at 最大的会话」——created_at 只有**秒**精度
+    # （app.models.ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"），同一秒内创建的多个会话会并列，
+    # 而 UserSession.id 是随机的 sess_<hex>，id.desc() 于是会随机挑中别的会话。
+    # 这在 CI 上真的发生过：同一份代码本地 174 passed、CI 上 173 passed / 1 failed。
     with session_scope() as session:
-        latest = (
-            session.query(UserSession).order_by(UserSession.created_at.desc(), UserSession.id.desc()).first()
+        row = (
+            session.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_refresh_token(tokens["refresh_token"]))
+            .one()
         )
-        assert latest is not None and latest.revoked_at is None
-        session_id = latest.id
+        session_id = row.session_id
+        assert session_id is not None
+        session_row = session.get(UserSession, session_id)
+        assert session_row is not None and session_row.revoked_at is None
 
     response = do_logout(client)
     assert response.status_code == 200
