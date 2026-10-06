@@ -240,6 +240,7 @@ git push -u origin feature/xxx        # 开 PR → main，等 CI 通过并合并
 | `deploy.sh: Permission denied` | 服务器上文件没有可执行位 | workflow 已 `chmod +x`；手工上传时记得 `chmod +x` |
 | `deploy.sh` 报 `bad interpreter: ...^M` | 上传/提交时带了 CRLF 换行 | `.gitattributes` 里已有 `*.sh text eol=lf`，重新提交 |
 | `docker pull` 报 `unauthorized` | `ghcr.io/elicloudorg/sso` 是 private 包 | 设为 public，或在 `app.env` 填 `SSO_GHCR_USER`/`SSO_GHCR_TOKEN` |
+| 阶段一镜像构建报 `HTTP error 403 ... pypi.tuna.tsinghua.edu.cn` | 构建发生在 GitHub runner（境外出口 IP），清华源会间歇性 403 | Dockerfile 的 `PIP_INDEX_URL` 默认已是官方 PyPI；国内本地构建请用 `--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `docker: permission denied ... /var/run/docker.sock` | `deploy` 不在 docker 组，或改组后没重新登录 | `id deploy` 确认；`usermod -aG docker deploy` 后重新登录 |
 | `deploy.sh` 报找不到 `/srv/sso/app.env` | bootstrap 没跑或文件被删 | 重跑 `scripts/bootstrap-server.sh sso` 并填写变量 |
 | 容器起不来 / unhealthy | 变量缺失（`PUBLIC_BASE_URL`）、私钥路径、端口被占 | `deploy.sh` 失败时会打印 `docker logs --tail 50 sso`；也可手工 `docker logs sso` |

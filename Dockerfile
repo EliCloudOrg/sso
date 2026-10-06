@@ -3,10 +3,14 @@
 # 设计要点：
 #   1. 私钥与 SQLite 都落在 /data（compose 里是挂卷），绝不进镜像层；
 #   2. 容器内以 uid 1002:1003（宿主机 docker-admin）运行，挂卷目录才能被写入；
-#   3. PIP_INDEX_URL 可覆盖：国内直连 PyPI 很慢，默认走清华镜像。
+#   3. PIP_INDEX_URL 可覆盖：镜像由 GitHub Actions 构建（境外网络），默认用官方 PyPI；
+#      在国内服务器上手工构建时传
+#        --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+#      （清华源对境外/CI 出口 IP 会间歇性 403 —— 实测 CI 的镜像构建就因此失败过一次，
+#       所以它只能作为国内构建的显式覆盖，不能当默认值。）
 FROM python:3.12-slim
 
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
