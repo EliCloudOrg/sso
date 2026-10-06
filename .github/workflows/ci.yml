@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, prod]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Test
+        run: pytest -q
+
+      # 「构建」= 真正跑一次镜像构建：Dockerfile 是本项目的产物形态，
+      # 部署（DEPLOY_MODE=image）用的就是它，这里提前验证它能构建成功。
+      - name: Build image
+        run: docker build -t sso:ci .
+
+  # 硬性约束：prod 只允许从 main 发 PR 合并。
+  # GitHub 的分支保护无法原生表达这条规则，所以在这里用必过检查强制它。
+  # 把本 job 加入 prod 的 Required status checks 即可生效。
+  guard-prod-source:
+    name: Guard prod source
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only main may target prod
+        # base_ref/head_ref 的值是分支名，分支名里可以有 " $ ; ` 等字符。
+        # 直接写进 shell（如 "${{ github.head_ref }}"）就是 GitHub 官方点名的
+        # 脚本注入模式，actionlint 的 expression 规则也会报错。
+        # 一律经 env 传入，脚本里只用 shell 变量。
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          echo "base=${BASE_REF} head=${HEAD_REF}"
+          if [ "${HEAD_REF}" != "main" ]; then
+            echo "::error::只有 main 可以发 PR 到 prod（当前 head=${HEAD_REF}）"
+            exit 1
+          fi
+          echo "OK: PR 来自 main"

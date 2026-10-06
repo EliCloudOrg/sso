@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pydeps/
+.pytest_cache/
+
+# 运行时数据与密钥：绝不进仓库
+data/
+.env
+
+# 本机测试产物
+.pytest-runner/

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}EliCloud{% endblock %}</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #f5f6f8; color: #1a1c1f; padding: 24px;
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  }
+  main {
+    width: 100%; max-width: 420px; background: #fff; border: 1px solid #e3e5e9;
+    border-radius: 12px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  h1 { margin: 0 0 6px; font-size: 20px; }
+  .hint { margin: 0 0 20px; color: #5b6270; font-size: 13px; }
+  .hint strong { color: #1a1c1f; }
+  label { display: block; margin-bottom: 14px; font-size: 13px; color: #3d434e; }
+  input[type=text], input[type=password] {
+    width: 100%; margin-top: 6px; padding: 10px 12px; font-size: 15px;
+    border: 1px solid #ccd0d7; border-radius: 8px; background: #fff; color: inherit;
+  }
+  input:focus { outline: 2px solid #3b6ef6; outline-offset: 1px; border-color: #3b6ef6; }
+  input.code {
+    letter-spacing: .18em; text-transform: uppercase; text-align: center;
+    font: 600 20px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  button {
+    width: 100%; margin-top: 6px; padding: 11px 12px; font-size: 15px; font-weight: 600;
+    color: #fff; background: #3b6ef6; border: 0; border-radius: 8px; cursor: pointer;
+  }
+  button:hover { background: #2f5ee0; }
+  button.secondary { background: #e8eaef; color: #2b3038; }
+  button.secondary:hover { background: #dcdfe6; }
+  .error {
+    margin: 0 0 16px; padding: 10px 12px; font-size: 13px;
+    color: #8a1c1c; background: #fdecec; border: 1px solid #f5c2c2; border-radius: 8px;
+  }
+  .ok {
+    margin: 0 0 16px; padding: 10px 12px; font-size: 13px;
+    color: #14532d; background: #eafaf0; border: 1px solid #b7e4c7; border-radius: 8px;
+  }
+  .code-badge {
+    display: block; margin: 0 0 18px; padding: 12px; text-align: center; border-radius: 8px;
+    background: #eef0f4; color: #1a1c1f;
+    font: 700 22px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em;
+  }
+  .scopes { margin: 0 0 18px; padding: 0; list-style: none; font-size: 13px; color: #3d434e; }
+  .scopes li { padding: 5px 0; border-bottom: 1px dashed #e3e5e9; display: flex; justify-content: space-between; gap: 12px; }
+  .scopes li:last-child { border-bottom: 0; }
+  code {
+    display: inline-block; padding: 1px 6px; border-radius: 5px; background: #eef0f4;
+    color: #1a1c1f; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  footer { margin-top: 18px; color: #7a818e; font-size: 12px; text-align: center; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181c; color: #e8eaed; }
+    main { background: #1e2126; border-color: #2e3238; }
+    .hint { color: #9aa1ad; } .hint strong { color: #e8eaed; }
+    label { color: #b9c0cb; }
+    input[type=text], input[type=password] { background: #16181c; border-color: #3a3f47; }
+    .error { color: #ffb4b4; background: #2a1a1a; border-color: #5a2a2a; }
+    .ok { color: #a7f3c4; background: #10231a; border-color: #2c5138; }
+    .code-badge { background: #2a2e34; color: #e8eaed; }
+    .scopes { color: #b9c0cb; } .scopes li { border-bottom-color: #2e3238; }
+    code { background: #2a2e34; color: #e8eaed; }
+    button.secondary { background: #2a2e34; color: #e8eaed; }
+    button.secondary:hover { background: #33383f; }
+  }
+</style>
+</head>
+<body>
+<main>
+{% block content %}{% endblock %}
+<footer>EliCloud 统一身份认证</footer>
+</main>
+</body>
+</html>

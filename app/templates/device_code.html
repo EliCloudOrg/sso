@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}输入设备码 · EliCloud{% endblock %}
+{% block content %}
+  <h1>输入设备码</h1>
+  <p class="hint">请把设备上显示的短码输入下方（形如 <code>WDJB-MJHT</code>，不区分大小写）。</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="user_code">设备码
+      <input id="user_code" class="code" name="user_code" type="text" inputmode="latin"
+             autocomplete="off" autocapitalize="characters" spellcheck="false"
+             maxlength="9" placeholder="XXXX-XXXX" value="{{ user_code or '' }}"
+             required autofocus>
+    </label>
+    <button type="submit">继续</button>
+  </form>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}已登出 · EliCloud{% endblock %}
+{% block content %}
+  <h1>已登出</h1>
+  <p class="ok">你的 EliCloud 登录会话已结束，该会话派生的访问权限也已撤销。</p>
+  {% if notice %}<p class="hint">{{ notice }}</p>{% endif %}
+  <p class="hint">可以关闭本页，或回到应用重新登录。</p>
+{% endblock %}

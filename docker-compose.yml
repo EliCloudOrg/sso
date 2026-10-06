@@ -1,0 +1,79 @@
+# ============================================================
+# EliCloud SSO —— IP 阶段部署编排
+#
+# ⚠️ 本文件是 **本地 / 手工** 用的编排（build: . 现场构建镜像）。
+#    生产部署已由自托管部署框架接管，线上实际执行的那份编排由
+#    /srv/sso/deploy.sh 生成（拉 ghcr.io/elicloudorg/sso:prod），
+#    见仓库根的 README-deploy.md。改环境变量请改服务器的
+#    /srv/sso/app.env，不要只改这里。
+#
+# 架构：公网 -> dsh-caddy(80/443, IP 证书 + /auth/* 路由) -> sso:8000（仅内网）
+#   - SSO 不向公网暴露端口，只加入 dsh-caddy 所在的 external 网络；
+#   - 额外把 8000 绑到宿主机回环地址（127.0.0.1:8000），只为本机 curl 调试，
+#     公网与内网都访问不到（与 dsh-web 的 127.0.0.1:3080 同一手法）。
+#
+# 注意：
+#   1. 本机 Docker 为 snap 安装，/opt 与 /tmp 不能用于 bind mount，
+#      因此部署目录放在 /home/docker-admin/elicloud/sso；
+#   2. ./data 是私钥 + SQLite 的落点，必须持久化，绝不进镜像；
+#   3. 容器以 uid 1002:1003（宿主机 docker-admin）运行，./data 需属于该用户。
+# ============================================================
+
+services:
+  sso:
+    build: .
+    image: elicloud-sso:1.0.0
+    container_name: sso
+    restart: unless-stopped
+    user: "1002:1003"
+    volumes:
+      - ./data:/data
+    environment:
+      # ⚠️ 唯一需要随部署阶段改动的两项（见 README「阶段切换」）
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:?请先在 .env 里设置 PUBLIC_BASE_URL}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
+      # issuer / jwks_uri 由 PUBLIC_BASE_URL 派生，不单独配置，避免两者不一致
+      DATABASE_URL: "sqlite:////data/sso.db"
+      JWT_ALG: "RS256"
+      JWT_KID: "${JWT_KID:-2026-01}"
+      JWT_PRIVATE_KEY_PATH: "/data/jwt_private.pem"
+      JWT_KEYS_DIR: "/data/keys"
+      ACCESS_TOKEN_TTL: "3600"
+      REFRESH_TOKEN_TTL: "2592000"
+      ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-false}"
+      AUDIENCE: "elicloud-services"
+      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write"
+      # ---- OIDC（docs/sso-oidc.md §9）----
+      AUTHORIZATION_CODE_TTL: "60"
+      ID_TOKEN_TTL: "600"
+      SESSION_TTL: "43200"
+      SESSION_COOKIE_NAME: "elicloud_sso_session"
+      DEVICE_CODE_TTL: "600"
+      DEVICE_POLL_INTERVAL: "5"
+      # 客户端管理接口（/v1/clients）的 Bearer 令牌；留空 = 该组接口整体关闭
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
+      LOGIN_ATTEMPTS_PER_WINDOW: "10"
+      LOGIN_WINDOW_SECONDS: "900"
+      LOG_LEVEL: "info"
+    ports:
+      # 仅回环：本机 curl / SSH 隧道调试用，公网不可达
+      - "127.0.0.1:8000:8000"
+    networks:
+      - gateway
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/.well-known/jwks.json', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  # 复用 dsh-caddy 所在网络：IP 阶段先用它，避免改动 dsh-nas 的编排。
+  # 域名阶段建议改为独立网络 elicloud（在 dsh-nas/compose 里给 caddy 也接上该网络）。
+  gateway:
+    external: true
+    name: dsh-nas_dsh-net

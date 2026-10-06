@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}确认设备授权 · EliCloud{% endblock %}
+{% block content %}
+  <h1>确认设备授权</h1>
+  <p class="hint">设备 <strong>{{ client_name }}</strong> 请求使用你的 EliCloud 账号（{{ username }}）。</p>
+
+  <span class="code-badge">{{ user_code }}</span>
+
+  <ul class="scopes">
+    {% for scope in scopes %}
+      <li><span>{{ scope.label }}</span><code>{{ scope.name }}</code></li>
+    {% endfor %}
+  </ul>
+
+  <p class="hint">只有在你本人发起并且信任该设备时才点"同意"。</p>
+
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="user_code" value="{{ user_code }}">
+    <button type="submit" name="decision" value="approve">同意</button>
+    <button type="submit" class="secondary" name="decision" value="deny">拒绝</button>
+  </form>
+{% endblock %}
