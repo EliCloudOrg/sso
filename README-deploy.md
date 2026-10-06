@@ -105,10 +105,12 @@
    `ref` 填 `prod`。人工审批通过后，Actions 会构建并推送镜像，把 `deploy.sh` 上传到
    `/srv/sso/deploy.sh` 并执行。
 
-> **一次性中断**：首次部署时 `deploy.sh` 需要把旧 compose 项目
-> （`/home/docker-admin/elicloud/sso`）管理的同名容器 `sso` 移除，再由本项目重建，
-> SSO 中断约 5–15 秒。`/data` 是 bind mount，不受影响 → **issuer 不变、已签发令牌仍有效**。
-> 之后每次部署由 `docker compose up -d` 原地重建，不再有这步迁移。
+> **首次部署的中断**：切换前 `sso` 容器由 `/home/docker-admin/elicloud/sso` 下的 compose 管理，
+> 但那个 compose **项目名同样是 `sso`**，所以 `docker compose up -d` 直接把它当成自己的容器
+> 原地重建（stop → rm → create），中断只有重建的那几秒（实测从 `docker pull` 到 `healthy` 全程约 12 秒）。
+> `deploy.sh` 里的「迁移」分支只在同名容器属于**另一个项目名**时才会触发，本机没有走到。
+> `/data` 是 bind mount，不受影响 → **issuer 不变、已签发令牌仍有效**
+> （实测切换后 `jwt_private.pem` 的 mtime 与大小都没变）。
 
 ## GitHub 配置清单（本仓库实际值）
 

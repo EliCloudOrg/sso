@@ -113,7 +113,13 @@ services:
       REFRESH_TOKEN_TTL: "2592000"
       ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-false}"
       AUDIENCE: "elicloud-services"
-      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write"
+      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write mc:whitelist"
+      # ⚠️ 这一行是本项目的**第二个真源**：app/config.py 里的 default_scope 是代码默认值，
+      #    而环境变量会覆盖它。只改代码不改这里 → 线上签发的令牌里没有新 scope
+      #    （2026-10-06 新增 mc:whitelist 时踩过：发现文档已声明、客户端也放行，
+      #      但令牌里就是没有，业务服务全部 403。详见 docs/mc-whitelist.md §12.4）。
+      #    加/改 scope 时四处都要动：constants.SUPPORTED_SCOPES、config.default_scope、
+      #    device.SCOPE_LABELS、以及本文件（服务器的 /srv/sso/deploy.sh 由本文件同步覆盖）。
       # ---- OIDC（docs/sso-oidc.md §9）----
       AUTHORIZATION_CODE_TTL: "60"
       ID_TOKEN_TTL: "600"
@@ -150,9 +156,9 @@ networks:
     name: ${SSO_GATEWAY_NETWORK}
 YAML
 
-# ---------- 2) 一次性迁移：清掉不属于本 compose 项目的同名容器 ----------
-# 切换前 sso 由 /home/docker-admin/elicloud/sso 下的 compose 项目管理，
-# compose 不允许同名的外来容器，必须先移除（之后由本项目接管，不再出现）。
+# ---------- 2) 迁移：清掉「属于另一个 compose 项目」的同名容器 ----------
+# compose 不接受同名的外来容器。本项目切换时旧项目名恰好也是 sso，compose 会自行
+# 原地重建，这里不会触发；保留它是为了别的项目名/手工创建的容器这种情形。
 if docker inspect sso >/dev/null 2>&1; then
   existing_project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' sso 2>/dev/null || true)"
   if [ "${existing_project}" != "${PROJECT_NAME}" ]; then

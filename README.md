@@ -79,7 +79,7 @@ sso/
 | `ACCESS_TOKEN_TTL` | `3600` | 秒 |
 | `REFRESH_TOKEN_TTL` | `2592000` | 秒（30 天） |
 | `AUDIENCE` | `elicloud-services` | JWT `aud` |
-| `DEFAULT_SCOPE` | `openid profile email pdf:read pdf:write` | JWT `scope`；当前不是授权边界 |
+| `DEFAULT_SCOPE` | `openid profile email pdf:read pdf:write mc:whitelist` | JWT `scope`；当前不是授权边界。**必须与 `app/config.py` 的 `default_scope` 一致**：环境变量会覆盖代码默认值，只改一处会让新 scope 签不出来（2026-10-06 新增 `mc:whitelist` 时踩过） |
 | `ALLOW_REGISTRATION` | `false` | 是否开放自助注册 |
 | `LOGIN_ATTEMPTS_PER_WINDOW` | `10` | 同一 IP+用户名 在窗口内的登录尝试上限 |
 | `LOGIN_WINDOW_SECONDS` | `900` | 限流窗口（秒） |

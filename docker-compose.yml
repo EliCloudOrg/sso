@@ -42,7 +42,12 @@ services:
       REFRESH_TOKEN_TTL: "2592000"
       ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-false}"
       AUDIENCE: "elicloud-services"
-      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write"
+      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write mc:whitelist"
+      # ⚠️ 上面这一行**必须与 app/config.py 的 default_scope 一致**：
+      #    环境变量会覆盖代码默认值，只改代码不改这里 = 令牌里没有新 scope
+      #    （新增业务服务时踩过一次，见 docs/mc-whitelist.md §12.4）。
+      #    加/改 scope 时四处都要动：constants.SUPPORTED_SCOPES、config.default_scope、
+      #    device.SCOPE_LABELS、以及本文件（+ 服务器的 /srv/sso/app.env，如果它设置了该项）。
       # ---- OIDC（docs/sso-oidc.md §9）----
       AUTHORIZATION_CODE_TTL: "60"
       ID_TOKEN_TTL: "600"
