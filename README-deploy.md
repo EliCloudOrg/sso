@@ -22,6 +22,11 @@
 | 运行时变量 | `/srv/sso/app.env`（0600 `deploy:deploy`） |
 | 密钥 | 仓库 Actions Secret `SSH_KEY`（部署私钥）；公钥在 `/home/deploy/.ssh/authorized_keys` |
 
+> **镜像源（2026-10-27 本机实测差异）**：Actions 仍推 `ghcr.io/elicloudorg/sso`；但服务器直连
+> ghcr.io 拉大层会停在 `Pulling fs layer` 不动，因此 `/srv/sso/app.env` 里设了
+> `SSO_IMAGE_REPO=ghcr.nju.edu.cn/elicloudorg/sso`（公共 ghcr 加速源，包必须保持 public）。
+> 想改回直连只改这一行并重新部署即可。
+
 ## ⚠️ 本机环境的三条硬约束（决定了 `deploy.sh` 为什么长这样）
 
 1. **Docker 是 snap 安装的**（`/snap/bin/docker`），snap 沙箱**看不到 `/srv`**。
