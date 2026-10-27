@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     access_token_ttl: int = 3600
     refresh_token_ttl: int = 2592000  # 30 天
     audience: str = "elicloud-services"
-    default_scope: str = "openid profile email pdf:read pdf:write mc:whitelist"
+    default_scope: str = (
+        "openid profile email pdf:read pdf:write mc:whitelist "
+        "files:read files:write userinfo:read userinfo:write"
+    )
 
     # ---- OIDC（docs/sso-oidc.md §9）-----------------------------------------
     authorization_code_ttl: int = 60
@@ -51,6 +54,20 @@ class Settings(BaseSettings):
     login_attempts_per_window: int = 10
     login_window_seconds: int = 900
     log_level: str = "info"
+
+    # ---- 注册邮箱验证（email 服务） ----------------------------------------
+    # 全部通过环境变量注入；token/secret 为空时注册与回调 fail closed（503），
+    # 登录等其它端点不受影响。
+    email_service_base_url: str = "http://email:8000"
+    email_internal_token: str = ""
+    email_callback_secret: str = ""
+    email_callback_url: str = "http://sso:8000/internal/email/verification"
+    email_verification_ttl_seconds: int = 900
+    email_resend_cooldown_seconds: int = 60
+    email_reconcile_seconds: int = 5
+    # 必须大于 email 服务的 SMTP_TIMEOUT（生产 10 秒），否则会在邮件已发出时误判失败。
+    email_http_timeout_seconds: float = 20.0
+    registration_retention_days: int = 1
 
     # ------------------------------------------------------------------ 校验
     @field_validator("public_base_url")
@@ -78,6 +95,60 @@ class Settings(BaseSettings):
         if not name or any(ch in name for ch in " ;,=\t\r\n"):
             raise ValueError("SESSION_COOKIE_NAME 不能为空，且不能包含空格或 ; , = 等分隔符")
         return name
+
+    @field_validator("email_service_base_url", "email_callback_url")
+    @classmethod
+    def _check_email_url(cls, value: str) -> str:
+        cleaned = value.strip().rstrip("/")
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("EMAIL_SERVICE_BASE_URL / EMAIL_CALLBACK_URL 必须是完整的 http(s) 地址")
+        if parsed.query or parsed.fragment:
+            raise ValueError("EMAIL_SERVICE_BASE_URL / EMAIL_CALLBACK_URL 不能带 query 或 fragment")
+        return cleaned
+
+    @field_validator("email_internal_token", "email_callback_secret")
+    @classmethod
+    def _check_email_secret(cls, value: str) -> str:
+        secret = value.strip()
+        if secret and len(secret) < 32:
+            raise ValueError("EMAIL_INTERNAL_TOKEN / EMAIL_CALLBACK_SECRET 至少 32 个字符")
+        return secret
+
+    @field_validator("email_verification_ttl_seconds")
+    @classmethod
+    def _check_email_ttl(cls, value: int) -> int:
+        if not 60 <= value <= 86400:
+            raise ValueError("EMAIL_VERIFICATION_TTL_SECONDS 必须在 60~86400 之间")
+        return value
+
+    @field_validator("email_resend_cooldown_seconds")
+    @classmethod
+    def _check_email_cooldown(cls, value: int) -> int:
+        if not 0 <= value <= 3600:
+            raise ValueError("EMAIL_RESEND_COOLDOWN_SECONDS 必须在 0~3600 之间")
+        return value
+
+    @field_validator("email_reconcile_seconds")
+    @classmethod
+    def _check_email_reconcile(cls, value: int) -> int:
+        if not 0 <= value <= 300:
+            raise ValueError("EMAIL_RECONCILE_SECONDS 必须在 0~300 之间")
+        return value
+
+    @field_validator("email_http_timeout_seconds")
+    @classmethod
+    def _check_email_timeout(cls, value: float) -> float:
+        if not 1 <= value <= 60:
+            raise ValueError("EMAIL_HTTP_TIMEOUT_SECONDS 必须在 1~60 之间")
+        return value
+
+    @field_validator("registration_retention_days")
+    @classmethod
+    def _check_registration_retention(cls, value: int) -> int:
+        if not 0 <= value <= 30:
+            raise ValueError("REGISTRATION_RETENTION_DAYS 必须在 0~30 之间")
+        return value
 
     # ------------------------------------------------------------ 派生地址
     @property
@@ -132,6 +203,11 @@ class Settings(BaseSettings):
     def cookie_secure(self) -> bool:
         """HTTPS 阶段必须开 Secure；IP 阶段用的是受信 IP 证书，可以且应当开。"""
         return self.public_base_url.startswith("https://")
+
+    @property
+    def email_verification_enabled(self) -> bool:
+        """注册邮箱验证是否已配置完整；不完整时注册/回调 fail closed。"""
+        return bool(self.email_internal_token and self.email_callback_secret and self.email_service_base_url)
 
     def external_url(self, path: str) -> str:
         """把服务内路径拼成对外地址（用于 OIDC 发现文档）。"""

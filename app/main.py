@@ -21,8 +21,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import __version__
 from .config import Settings, get_settings
 from .db import init_db
+from .email_client import EmailServiceClient
 from .keys import get_keystore
-from .routers import auth, clients, oidc, userinfo, wellknown
+from .routers import auth, clients, oidc, registration, userinfo, wellknown
 
 logger = logging.getLogger("sso")
 
@@ -49,11 +50,27 @@ async def lifespan(app: FastAPI):
     )
     if not settings.allow_registration:
         logger.info("sso 自助注册已关闭；建号请用 `python -m app.cli create-user`")
-    yield
-    logger.info("sso stopped")
+    logger.info(
+        "sso email_verification=%s email_service=%s",
+        settings.email_verification_enabled,
+        settings.email_service_base_url,
+    )
+    if not settings.email_verification_enabled:
+        logger.warning("EMAIL_INTERNAL_TOKEN / EMAIL_CALLBACK_SECRET 未配置；注册与回调将返回 503")
+    try:
+        yield
+    finally:
+        client = getattr(app.state, "email_client", None)
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+        logger.info("sso stopped")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    email_client: EmailServiceClient | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
@@ -71,6 +88,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.keystore = keystore
+    # 允许测试注入 fake；生产默认是直连 email 服务的同步客户端。
+    app.state.email_client = email_client or EmailServiceClient(settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -132,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(auth.router)
+    app.include_router(registration.router)
     app.include_router(userinfo.router)
     app.include_router(wellknown.router)
     app.include_router(clients.router)

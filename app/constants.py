@@ -16,6 +16,12 @@ SCOPE_PDF_WRITE = "pdf:write"
 # MC 白名单服务（/mc/*）—— 业务服务按自己的 scope 做授权边界，
 # 详见 docs/mc-whitelist.md §6.1 / §12.4。
 SCOPE_MC_WHITELIST = "mc:whitelist"
+# 文件服务（/file/*）：读自己的/被授权的文件；上传、删除、改可见性、授权。
+SCOPE_FILES_READ = "files:read"
+SCOPE_FILES_WRITE = "files:write"
+# 用户资料服务（/userinfo/*）：读取/修改昵称、简介、头像、banner。
+SCOPE_USERINFO_READ = "userinfo:read"
+SCOPE_USERINFO_WRITE = "userinfo:write"
 
 # 与 sso-oidc.md §2.2 的 scopes_supported 保持一致
 # ⚠️ 加新 scope 时**四处都要改**：本文件、config.default_scope、
@@ -28,6 +34,10 @@ SUPPORTED_SCOPES: tuple[str, ...] = (
     SCOPE_PDF_READ,
     SCOPE_PDF_WRITE,
     SCOPE_MC_WHITELIST,
+    SCOPE_FILES_READ,
+    SCOPE_FILES_WRITE,
+    SCOPE_USERINFO_READ,
+    SCOPE_USERINFO_WRITE,
 )
 
 # ------------------------------------------------- grant / response type

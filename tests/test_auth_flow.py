@@ -26,8 +26,21 @@ from app.db import session_scope
 from app.keys import KeyStore, reset_keystore_cache, save_public_key
 from app.models import User
 from app.security import decode_access_token
+from tests.helpers import approve_registration, user_by_username
 
 PASSWORD = "S3cret!pass1"
+
+
+class _CompatResponse:
+    """把「202 pending + 回调建号」包装成旧测试期望的 201 user 响应。"""
+
+    def __init__(self, status_code: int, payload: dict, text: str = "") -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self) -> dict:
+        return self._payload
 
 
 def unique_username(prefix: str = "user") -> str:
@@ -36,11 +49,16 @@ def unique_username(prefix: str = "user") -> str:
 
 def register(client, username: str | None = None, password: str = PASSWORD, email: str | None = None):
     username = username or unique_username()
-    body: dict[str, str] = {"username": username, "password": password}
-    if email:
-        body["email"] = email
-    response = client.post("/v1/register", json=body)
-    return response, username
+    email = email or f"{username}@example.com"
+    response = client.post("/v1/register", json={"username": username, "password": password, "email": email})
+    if response.status_code != 202:
+        return response, username
+
+    registration_id = response.json()["registration_id"]
+    approve_registration(client, registration_id)
+    user = user_by_username(username)
+    assert user is not None, "邮箱确认后应该创建用户"
+    return _CompatResponse(201, {"user": user.to_public_dict()}), username
 
 
 def login(client, username: str, password: str = PASSWORD):
@@ -179,12 +197,18 @@ def test_register_duplicate_username_returns_409(client):
     response, username = register(client)
     assert response.status_code == 201
 
-    duplicate = client.post("/v1/register", json={"username": username, "password": PASSWORD})
+    duplicate = client.post(
+        "/v1/register",
+        json={"username": username, "password": PASSWORD, "email": f"{unique_username('dup')}@example.com"},
+    )
     assert duplicate.status_code == 409
     assert duplicate.json()["error"] == "user_exists"
 
     # 仅大小写不同也算冲突
-    duplicate = client.post("/v1/register", json={"username": username.upper(), "password": PASSWORD})
+    duplicate = client.post(
+        "/v1/register",
+        json={"username": username.upper(), "password": PASSWORD, "email": f"{unique_username('dup2')}@example.com"},
+    )
     assert duplicate.status_code == 409
 
 
@@ -204,7 +228,13 @@ def test_register_rejects_weak_password(client, password):
 
 
 def test_register_rejects_bad_username_and_email(client):
-    assert client.post("/v1/register", json={"username": "a b", "password": PASSWORD}).status_code == 400
+    assert (
+        client.post(
+            "/v1/register",
+            json={"username": "a b", "password": PASSWORD, "email": f"{unique_username('bad')}@example.com"},
+        ).status_code
+        == 400
+    )
 
     response = client.post(
         "/v1/register",
@@ -222,6 +252,7 @@ def test_register_duplicate_email_returns_409(client):
         json={"username": unique_username(), "password": PASSWORD, "email": email},
     )
     assert response.status_code == 409
+    assert response.json()["error"] == "email_exists"
 
 
 def test_registration_can_be_disabled_by_config(client):
@@ -249,8 +280,49 @@ def test_login_failure_does_not_leak_user_existence(client):
     # 「用户不存在」与「密码错误」必须给出完全相同的响应
     assert wrong_password.json() == unknown_user.json() == {
         "error": "invalid_grant",
-        "error_description": "用户名或密码错误",
+        "error_description": "账号或密码错误",
     }
+
+
+def test_login_accepts_username_or_email(client):
+    """登录那一格填用户名或邮箱都行 —— 两条路径签发的令牌等价。"""
+    email = f"{unique_username('mail')}@example.com"
+    response, username = register(client, email=email)
+    assert response.status_code == 201
+
+    by_username = login(client, username)
+    by_email = login(client, email)
+    assert by_username.status_code == by_email.status_code == 200
+
+    # 令牌里认的是同一个账号，不是「碰巧都能登」
+    assert by_username.json()["user"]["id"] == by_email.json()["user"]["id"]
+    assert by_username.json()["user"]["username"] == username
+
+
+def test_login_by_email_is_case_insensitive(client):
+    email = f"{unique_username('mail')}@example.com"
+    register(client, email=email)
+
+    assert login(client, email.upper()).status_code == 200
+    assert login(client, f"  {email}  ").status_code == 200
+
+
+def test_login_with_unknown_email_does_not_leak_user_existence(client):
+    wrong_password = login(client, f"{unique_username('mail')}@example.com", PASSWORD)
+    unknown_email = login(client, f"{unique_username('ghost')}@example.com", PASSWORD)
+
+    assert wrong_password.status_code == unknown_email.status_code == 401
+    assert wrong_password.json() == unknown_email.json()
+
+
+def test_username_cannot_look_like_an_email(client):
+    """用户名不含 @ —— 这是「用户名优先、邮箱兜底」不会歧义的前提。"""
+    response = client.post(
+        "/v1/register",
+        json={"username": "alice@example.com", "password": PASSWORD, "email": f"{unique_username('mail')}@example.com"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
 
 
 def test_disabled_user_cannot_login(client):

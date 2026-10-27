@@ -8,7 +8,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.db import session_scope
-from app.models import User
+from app.models import User, to_iso, utcnow
 from tests.helpers import (
     REDIRECT_URI,
     make_public_client,
@@ -87,10 +87,24 @@ def test_userinfo_includes_email_with_email_scope(client):
 
     body = client.get("/v1/userinfo", headers=token_headers(token)).json()
     assert body["email"] == email
-    # 本平台没有邮箱验证流程 → 如实标注 false，不假装已验证
+    # 这个账号是直接建库的「历史账号」，没有 email_verified_at → 如实为 false。
     assert body["email_verified"] is False
     # 没有 profile scope → 不给用户名
     assert "preferred_username" not in body
+
+
+def test_userinfo_reports_email_verified_true_after_verification(client):
+    token, email = get_access_token(
+        client, scopes=["openid", "email"], scope="openid email", with_email=True
+    )
+    with session_scope() as session:
+        user = session.scalar(select(User).where(User.email == email))
+        user.email_verified_at = to_iso(utcnow())
+        session.commit()
+
+    body = client.get("/v1/userinfo", headers=token_headers(token)).json()
+    assert body["email"] == email
+    assert body["email_verified"] is True
 
 
 def test_userinfo_email_absent_when_user_has_no_email(client):

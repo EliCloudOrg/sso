@@ -137,7 +137,7 @@ def test_id_token_claims_follow_scope(client):
     assert "username" not in claims  # B2：非标准名不出现
 
 
-def test_id_token_includes_email_and_email_verified_false(client):
+def test_id_token_includes_email_and_email_verified_false_for_legacy_account(client):
     client_id = make_public_client(client, scopes=["openid", "email"])
     username, _ = make_user(client)
     from app.db import session_scope
@@ -157,7 +157,7 @@ def test_id_token_includes_email_and_email_verified_false(client):
     claims = pyjwt.decode(tokens["id_token"], options={"verify_signature": False})
 
     assert claims["email"] == f"{username}@example.com"
-    # 本平台没有邮箱验证流程 → 如实标注 false，不假装已验证
+    # 这个账号是直接建库的「历史账号」，没有 email_verified_at → 如实为 false。
     assert claims["email_verified"] is False
     assert "preferred_username" not in claims
 

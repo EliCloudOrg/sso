@@ -17,6 +17,7 @@ from app.db import session_scope
 from app.models import AuthorizationCode, UserSession, User
 from app.oidc import pkce_challenge_s256
 from app.sessions import csrf_cookie_name
+from tests.helpers import approve_registration, make_user as make_verified_user
 
 ADMIN_HEADERS = {"Authorization": "Bearer test-admin-token-not-a-real-secret"}
 PASSWORD = "S3cret!pass1"
@@ -48,10 +49,7 @@ def make_public_client(client, *, redirect_uris=None, scopes=None) -> str:
 
 
 def make_user(client) -> tuple[str, str]:
-    username = unique("alice")
-    response = client.post("/v1/register", json={"username": username, "password": PASSWORD})
-    assert response.status_code == 201, response.text
-    return username, response.json()["user"]["id"]
+    return make_verified_user(client, password=PASSWORD)
 
 
 def pkce_pair() -> tuple[str, str]:
@@ -246,10 +244,41 @@ def test_login_page_ignores_invalid_password_and_shows_generic_error(client):
     response = post_login(client, params, username=username, password="WrongPass123")
 
     assert response.status_code == 200
-    assert "用户名或密码错误" in response.text
+    assert "账号或密码错误" in response.text
     assert "code=" not in response.headers.get("location", "")
     # 失败的登录不该建立会话
     assert client.cookies.get(get_settings().session_cookie_name) is None
+
+
+def test_login_page_accepts_email(client):
+    """登录页那一格填邮箱也能通过 —— 它与 /v1/login 共用同一份 authenticate。"""
+    client_id = make_public_client(client)
+    email = f"{unique('mail')}@example.com"
+    created = client.post(
+        "/v1/register",
+        json={"username": unique("alice"), "password": PASSWORD, "email": email},
+    )
+    assert created.status_code == 202, created.text
+    approve_registration(client, created.json()["registration_id"])
+
+    verifier, challenge = pkce_pair()
+    params = authorize_params(client_id, verifier=verifier, challenge=challenge)
+
+    get_authorize(client, params)
+    response = post_login(client, params, username=email)
+
+    assert response.status_code == 302, response.text
+    assert "code=" in response.headers.get("location", "")
+
+
+def test_login_page_labels_the_field_as_username_or_email(client):
+    """输入框的说明必须说清楚两种都行 —— 否则就是在重复“填邮箱登录不了”的旧体验。"""
+    client_id = make_public_client(client)
+    verifier, challenge = pkce_pair()
+    response = get_authorize(client, authorize_params(client_id, verifier=verifier, challenge=challenge))
+
+    assert response.status_code == 200
+    assert "用户名或邮箱" in response.text
 
 
 def test_login_post_requires_csrf(client):

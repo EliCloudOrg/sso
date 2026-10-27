@@ -29,9 +29,9 @@
       {% if prompt %}<input type="hidden" name="prompt" value="{{ prompt }}">{% endif %}
     {% endif %}
 
-    <label for="username">用户名
+    <label for="username">用户名或邮箱
       <input id="username" name="username" type="text" autocomplete="username"
-             value="{{ username or '' }}" required autofocus>
+             placeholder="用户名或邮箱" value="{{ username or '' }}" required autofocus>
     </label>
     <label for="password">密码
       <input id="password" name="password" type="password" autocomplete="current-password" required>

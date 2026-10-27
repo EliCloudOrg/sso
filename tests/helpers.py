@@ -7,12 +7,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import secrets
+import time
 from urllib.parse import parse_qs, urlsplit
 
+from sqlalchemy import select
+
 from app.config import get_settings
+from app.db import session_scope
 from app.oidc import pkce_challenge_s256
+from app.security import hash_password
 from app.sessions import csrf_cookie_name
+from app.users import create_user
 
 ADMIN_HEADERS = {"Authorization": "Bearer test-admin-token-not-a-real-secret"}
 PASSWORD = "S3cret!pass1"
@@ -80,10 +89,79 @@ def make_confidential_client(
 
 
 def make_user(client, *, password: str = PASSWORD) -> tuple[str, str]:
+    """直接建一个可用账号。
+
+    OIDC / 登录测试不关心注册流程，绕开 ``/v1/register`` 的邮箱验证，
+    避免每个用例都要模拟一次邮件确认。
+    """
     username = unique("alice")
-    response = client.post("/v1/register", json={"username": username, "password": password})
-    assert response.status_code == 201, response.text
-    return username, response.json()["user"]["id"]
+    with session_scope() as session:
+        user = create_user(
+            session,
+            username=username,
+            email=None,
+            password_hash=hash_password(password),
+        )
+        return username, user.id
+
+
+def email_stub(client):
+    return client.app.state.email_client
+
+
+def approve_registration(client, registration_id: str) -> None:
+    """模拟用户点击邮件 → email 服务向 SSO 发 HMAC 回调。"""
+    stub = email_stub(client)
+    record = next(
+        (
+            item
+            for item in reversed(stub.created)
+            if item["metadata"].get("registration_id") == registration_id
+        ),
+        None,
+    )
+    assert record is not None, f"没有找到 registration_id={registration_id} 的邮件请求"
+    request_id = str(record["id"])
+    stub.approve(request_id)
+    settings = get_settings()
+    payload = {
+        "event": "email.verification",
+        "request_id": request_id,
+        "status": "approved",
+        "reason": "user_confirm",
+        "decided_by": "user",
+        "email": record["email"],
+        "purpose": "register",
+        "source": "sso",
+        "metadata": {"registration_id": registration_id},
+        "verified_at": "2026-01-01T00:00:00Z",
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    timestamp = int(time.time())
+    signature = hmac.new(
+        settings.email_callback_secret.encode("utf-8"),
+        f"{timestamp}.".encode("utf-8") + raw,
+        hashlib.sha256,
+    ).hexdigest()
+    response = client.post(
+        "/internal/email/verification",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-EliCloud-Event": "email.verification",
+            "X-EliCloud-Timestamp": str(timestamp),
+            "X-EliCloud-Signature": f"sha256={signature}",
+            "Idempotency-Key": f"{request_id}:approved",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+def user_by_username(username: str):
+    from app.models import User
+
+    with session_scope() as session:
+        return session.scalar(select(User).where(User.username == username))
 
 
 # ----------------------------------------------------------------- PKCE

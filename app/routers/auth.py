@@ -10,39 +10,23 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..authentication import authenticate, find_user_by_username
-from ..config import Settings
+from ..authentication import authenticate
 from ..db import get_db
 from ..deps import KeyStoreDep, SettingsDep, client_ip
-from ..errors import api_error, limiter
-from ..models import User, to_iso, utcnow
-from ..security import (
-    create_access_token,
-    hash_password,
-    validate_email,
-    validate_password,
-    validate_username,
-)
+from ..errors import api_error
+from ..models import User
+from ..schemas import PublicUser
+from ..security import create_access_token
 from ..tokens import consume_refresh_token, issue_refresh_token, new_family_id, revoke_family
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["auth"])
 
-MAX_USER_ID_ATTEMPTS = 5
-
 
 # ------------------------------------------------------------------ 模型
-
-
-class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    email: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -52,17 +36,6 @@ class LoginRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
-
-
-class PublicUser(BaseModel):
-    id: str
-    username: str
-    email: str | None = None
-    created_at: str | None = None
-
-
-class RegisterResponse(BaseModel):
-    user: PublicUser
 
 
 class LoginResponse(BaseModel):
@@ -81,76 +54,7 @@ class RefreshResponse(BaseModel):
     refresh_token: str
 
 
-# ------------------------------------------------------------------ 工具
-
-
-def _next_user_id(db: Session) -> str:
-    """生成 user_0001 形式的递增 ID；并发下靠重试 + 主键冲突兜底。"""
-    existing = db.scalars(select(User.id)).all()
-    max_index = 0
-    for value in existing:
-        if value.startswith("user_"):
-            suffix = value[5:]
-            if suffix.isdigit():
-                max_index = max(max_index, int(suffix))
-    return f"user_{max_index + 1:04d}"
-
-
-def _login_rate_keys_placeholder() -> None:  # pragma: no cover - 占位，见下
-    """（已迁移到 app/authentication.py，此处仅保留文档说明位置。）"""
-
-
 # ------------------------------------------------------------------ 接口
-
-
-@router.post("/register", response_model=RegisterResponse, status_code=201)
-def register(
-    payload: RegisterRequest,
-    request: Request,
-    settings: SettingsDep,
-    db: Session = Depends(get_db),
-) -> RegisterResponse:
-    if not settings.allow_registration:
-        raise api_error(403, "registration_disabled", "本平台未开放自助注册，请联系管理员建号")
-
-    ip = client_ip(request)
-    if not limiter.allow(f"register-ip:{ip}", 20, 3600):
-        raise api_error(429, "too_many_requests", "注册请求过于频繁，请稍后再试", headers={"Retry-After": "3600"})
-
-    username = validate_username(payload.username)
-    password = validate_password(payload.password)
-    email = validate_email(payload.email)
-
-    if find_user_by_username(db, username) is not None:
-        raise api_error(409, "user_exists", "该用户名已被占用")
-    if email and db.scalar(select(User).where(func.lower(User.email) == email)) is not None:
-        raise api_error(409, "email_exists", "该邮箱已被占用")
-
-    now_iso = to_iso(utcnow())
-    last_error: IntegrityError | None = None
-    for _ in range(MAX_USER_ID_ATTEMPTS):
-        user = User(
-            id=_next_user_id(db),
-            username=username,
-            email=email,
-            password_hash=hash_password(password),
-            status="active",
-            created_at=now_iso,
-            updated_at=now_iso,
-        )
-        db.add(user)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            last_error = exc
-            if find_user_by_username(db, username) is not None:
-                raise api_error(409, "user_exists", "该用户名已被占用") from exc
-            continue
-        logger.info("user registered id=%s ip=%s", user.id, ip)
-        return RegisterResponse(user=PublicUser(**user.to_public_dict()))
-
-    raise api_error(409, "conflict", "注册冲突，请重试") from last_error
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -162,8 +66,9 @@ def login(
     db: Session = Depends(get_db),
 ) -> LoginResponse:
     ip = client_ip(request)
-    # 反枚举 + 限流的语义统一在 app/authentication.py，OIDC 登录页共用同一份实现
-    user = authenticate(db, username=payload.username, password=payload.password, ip=ip, settings=settings)
+    # 反枚举 + 限流的语义统一在 app/authentication.py，OIDC 登录页共用同一份实现。
+    # 字段名沿用 username（线上契约不能改），但它的值是「登录标识」—— 用户名或邮箱都行。
+    user = authenticate(db, identifier=payload.username, password=payload.password, ip=ip, settings=settings)
 
     access_token, expires_in = create_access_token(settings, keystore, user)
     refresh_token = issue_refresh_token(

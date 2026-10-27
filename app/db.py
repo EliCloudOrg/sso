@@ -30,6 +30,7 @@ _session_factory: sessionmaker[Session] | None = None
 # 需要按需补到既有表上的列（表名 -> 列名集合）
 _ADDED_COLUMNS: dict[str, tuple[str, ...]] = {
     "refresh_tokens": ("client_id", "scope", "session_id"),
+    "users": ("email_verified_at",),
 }
 
 

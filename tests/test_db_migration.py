@@ -40,6 +40,18 @@ CREATE TABLE refresh_tokens (
 )
 """
 
+LEGACY_USERS = """
+CREATE TABLE users (
+  id            TEXT PRIMARY KEY,
+  username      TEXT UNIQUE NOT NULL,
+  email         TEXT UNIQUE,
+  password_hash TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+)
+"""
+
 
 def _engine(tmp_path: Path, name: str):
     return create_engine(f"sqlite:///{(tmp_path / name).as_posix()}", future=True)
@@ -101,6 +113,20 @@ def test_add_missing_columns_is_idempotent(tmp_path):
     # 再跑一次不能报错（重启任意次都安全）
     _add_missing_columns(engine)
     assert {"client_id", "scope", "session_id"} <= _columns(engine, "refresh_tokens")
+
+
+def test_add_missing_email_verified_at_to_users(tmp_path):
+    engine = _engine(tmp_path, "users-columns.db")
+    with engine.begin() as connection:
+        connection.execute(text(LEGACY_USERS))
+
+    assert "email_verified_at" not in _columns(engine, "users")
+    _add_missing_columns(engine)
+    assert "email_verified_at" in _columns(engine, "users")
+
+    # 幂等：重启任意次都安全
+    _add_missing_columns(engine)
+    assert "email_verified_at" in _columns(engine, "users")
 
 
 def test_add_missing_columns_skips_absent_table(tmp_path):

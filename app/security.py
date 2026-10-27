@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import re
 import secrets
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -304,3 +306,37 @@ def hash_refresh_token(token: str) -> str:
 
 def refresh_token_expiry_iso(settings: Settings) -> str:
     return to_iso(utcnow() + timedelta(seconds=int(settings.refresh_token_ttl)))
+
+
+def verify_callback_signature(
+    secret: str,
+    timestamp: str | int | None,
+    raw_body: bytes,
+    signature: str | None,
+    *,
+    max_skew_seconds: int = 300,
+    now: float | None = None,
+) -> bool:
+    """校验 email 服务回调的 ``X-EliCloud-Signature``。
+
+    协议与 ``email/README.md`` §4 一致：
+    ``sha256=hex(HMAC_SHA256(secret, f"{timestamp}." + raw_body))``。
+    时间戳窗口默认 ±300 秒；签名与时间戳都缺失时直接失败。
+    """
+    if not secret or signature is None or timestamp is None:
+        return False
+    try:
+        timestamp_int = int(str(timestamp).strip())
+    except (TypeError, ValueError):
+        return False
+
+    moment = time.time() if now is None else now
+    if abs(moment - timestamp_int) > max_skew_seconds:
+        return False
+
+    raw_signature = signature.strip()
+    if raw_signature.startswith("sha256="):
+        raw_signature = raw_signature[len("sha256=") :]
+    message = f"{timestamp_int}.".encode("utf-8") + raw_body
+    expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, raw_signature)
