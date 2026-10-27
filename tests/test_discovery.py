@@ -115,6 +115,52 @@ def test_default_scope_covers_mc_whitelist(settings):
     assert SCOPE_MC_WHITELIST in settings.default_scope.split()
 
 
+@pytest.mark.parametrize(
+    ("constant_name", "scope_value"),
+    [("SCOPE_FILES_READ", "files:read"), ("SCOPE_FILES_WRITE", "files:write")],
+)
+def test_files_scopes_are_declared_and_accepted(client, constant_name, scope_value):
+    """文件服务的两个 scope（docs/file-service 计划 §7.1）。
+
+    同样要求「声明 == 接受 == 默认签发」三处一致，否则调用方拿不到可用令牌。
+    """
+    from app import constants
+    from app.clients import validate_scopes
+
+    payload = discovery(client)
+    assert getattr(constants, constant_name) == scope_value
+    assert scope_value in constants.SUPPORTED_SCOPES
+    assert scope_value in payload["scopes_supported"]
+    assert validate_scopes(["openid", scope_value]) == ["openid", scope_value]
+
+
+@pytest.mark.parametrize("scope", ["files:read", "files:write"])
+def test_default_scope_covers_files(settings, scope):
+    """默认令牌必须带 files scope，否则文件服务对所有人 403。"""
+    assert scope in settings.default_scope.split()
+
+
+@pytest.mark.parametrize(
+    ("constant_name", "scope_value"),
+    [("SCOPE_USERINFO_READ", "userinfo:read"), ("SCOPE_USERINFO_WRITE", "userinfo:write")],
+)
+def test_userinfo_scopes_are_declared_and_accepted(client, constant_name, scope_value):
+    """用户资料服务的两个 scope；声明、接受、默认签发三处必须一致。"""
+    from app import constants
+    from app.clients import validate_scopes
+
+    payload = discovery(client)
+    assert getattr(constants, constant_name) == scope_value
+    assert scope_value in constants.SUPPORTED_SCOPES
+    assert scope_value in payload["scopes_supported"]
+    assert validate_scopes(["openid", scope_value]) == ["openid", scope_value]
+
+
+@pytest.mark.parametrize("scope", ["userinfo:read", "userinfo:write"])
+def test_default_scope_covers_userinfo(settings, scope):
+    assert scope in settings.default_scope.split()
+
+
 def test_authorization_endpoint_actually_serves_the_flow(client):
     """声明的 authorization_endpoint 不只是"非 404"，而是真的能跑通授权。"""
     payload = discovery(client)

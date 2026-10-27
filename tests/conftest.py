@@ -39,11 +39,23 @@ os.environ.update(
         "REFRESH_TOKEN_TTL": "2592000",
         "ALLOW_REGISTRATION": "true",
         "AUDIENCE": "elicloud-services",
-        "DEFAULT_SCOPE": "openid profile email pdf:read pdf:write mc:whitelist",
+        "DEFAULT_SCOPE": (
+            "openid profile email pdf:read pdf:write mc:whitelist "
+            "files:read files:write userinfo:read userinfo:write"
+        ),
         "LOGIN_ATTEMPTS_PER_WINDOW": str(TEST_LOGIN_ATTEMPTS),
         "LOGIN_WINDOW_SECONDS": str(TEST_LOGIN_WINDOW),
         "ADMIN_TOKEN": TEST_ADMIN_TOKEN,
         "LOG_LEVEL": "warning",
+        "EMAIL_SERVICE_BASE_URL": "http://email.test",
+        "EMAIL_INTERNAL_TOKEN": "test-email-internal-token-000000000000",
+        "EMAIL_CALLBACK_SECRET": "test-email-callback-secret-0000000000",
+        "EMAIL_CALLBACK_URL": "http://sso:8000/internal/email/verification",
+        "EMAIL_VERIFICATION_TTL_SECONDS": "900",
+        "EMAIL_RESEND_COOLDOWN_SECONDS": "60",
+        "EMAIL_RECONCILE_SECONDS": "0",
+        "EMAIL_HTTP_TIMEOUT_SECONDS": "20",
+        "REGISTRATION_RETENTION_DAYS": "1",
     }
 )
 
@@ -63,10 +75,17 @@ def settings():
 
 
 @pytest.fixture(scope="session")
-def client(app_module):
+def email_stub():
+    from tests.fake_email import FakeEmailClient
+
+    return FakeEmailClient()
+
+
+@pytest.fixture(scope="session")
+def client(app_module, email_stub):
     from fastapi.testclient import TestClient
 
-    with TestClient(app_module.create_app()) as test_client:
+    with TestClient(app_module.create_app(email_client=email_stub)) as test_client:
         yield test_client
 
 

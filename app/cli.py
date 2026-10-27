@@ -5,6 +5,7 @@
     docker compose exec sso python -m app.cli create-user --username alice --password-stdin
     docker compose exec sso python -m app.cli list-users
     docker compose exec sso python -m app.cli set-status --username alice --status disabled
+    docker compose exec sso python -m app.cli verify-email --username alice
     docker compose exec sso python -m app.cli rotate-key --new-kid 2026-07
 
     # OIDC 客户端（sso-oidc.md §5.3）
@@ -26,7 +27,7 @@ import sys
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from .clients import (
     DEFAULT_GRANT_TYPES,
@@ -47,6 +48,7 @@ from .keys import KeyStore, generate_private_key, save_private_key, save_public_
 from .models import User, to_iso, utcnow
 from .oidc import split_scope
 from .security import hash_password, validate_email, validate_password, validate_username
+from .users import UserConflict, create_user, find_user_by_email, find_user_by_username
 
 
 def _print_api_error(exc: HTTPException) -> int:
@@ -69,42 +71,55 @@ def _read_password(args: argparse.Namespace) -> str:
 
 
 def _find_user(session, username: str) -> User | None:
-    return session.scalar(select(User).where(func.lower(User.username) == username.strip().lower()))
-
-
-def _next_user_id(session) -> str:
-    max_index = 0
-    for value in session.scalars(select(User.id)).all():
-        if value.startswith("user_") and value[5:].isdigit():
-            max_index = max(max_index, int(value[5:]))
-    return f"user_{max_index + 1:04d}"
+    return find_user_by_username(session, username)
 
 
 def cmd_create_user(args: argparse.Namespace) -> int:
     username = validate_username(args.username)
     password = validate_password(_read_password(args))
     email = validate_email(args.email)
+    if getattr(args, "email_verified", False) and not email:
+        print("--email-verified 需要同时提供 --email", file=sys.stderr)
+        return 2
 
     with session_scope() as session:
         if _find_user(session, username) is not None:
             print(f"用户名已存在：{username}", file=sys.stderr)
             return 1
-        if email and session.scalar(select(User).where(func.lower(User.email) == email)) is not None:
+        if email and find_user_by_email(session, email) is not None:
             print(f"邮箱已被占用：{email}", file=sys.stderr)
             return 1
-        now_iso = to_iso(utcnow())
-        user = User(
-            id=_next_user_id(session),
-            username=username,
-            email=email,
-            password_hash=hash_password(password),
-            status="active",
-            created_at=now_iso,
-            updated_at=now_iso,
+        try:
+            user = create_user(
+                session,
+                username=username,
+                email=email,
+                password_hash=hash_password(password),
+                email_verified_at=to_iso(utcnow()) if getattr(args, "email_verified", False) else None,
+            )
+        except UserConflict as exc:
+            print(exc.description, file=sys.stderr)
+            return 1
+        print(
+            f"已创建用户 {user.id} username={user.username} "
+            f"email={user.email or '-'} email_verified={user.email_verified}"
         )
-        session.add(user)
+    return 0
+
+
+def cmd_verify_email(args: argparse.Namespace) -> int:
+    with session_scope() as session:
+        user = _find_user(session, args.username)
+        if user is None:
+            print(f"用户不存在：{args.username}", file=sys.stderr)
+            return 1
+        if not user.email:
+            print(f"用户 {user.username} 没有邮箱，无法标记已验证", file=sys.stderr)
+            return 1
+        user.email_verified_at = user.email_verified_at or to_iso(utcnow())
+        user.updated_at = to_iso(utcnow())
         session.commit()
-        print(f"已创建用户 {user.id} username={user.username} email={user.email or '-'}")
+        print(f"{user.id} email_verified=true")
     return 0
 
 
@@ -114,9 +129,12 @@ def cmd_list_users(_args: argparse.Namespace) -> int:
         if not users:
             print("（暂无用户）")
             return 0
-        print(f"{'id':<12} {'username':<20} {'email':<28} {'status':<10} created_at")
+        print(f"{'id':<12} {'username':<20} {'email':<28} {'status':<10} {'verified':<8} created_at")
         for user in users:
-            print(f"{user.id:<12} {user.username:<20} {(user.email or '-'):<28} {user.status:<10} {user.created_at}")
+            print(
+                f"{user.id:<12} {user.username:<20} {(user.email or '-'):<28} "
+                f"{user.status:<10} {str(user.email_verified):<8} {user.created_at}"
+            )
     return 0
 
 
@@ -308,7 +326,16 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--password", default=None, help="明文密码（不推荐，建议 --password-stdin）")
     create.add_argument("--password-stdin", action="store_true", help="从标准输入读一行作为密码")
     create.add_argument("--email", default=None)
+    create.add_argument(
+        "--email-verified",
+        action="store_true",
+        help="把该邮箱标记为已验证（仅管理员明确知道邮箱归属时使用）",
+    )
     create.set_defaults(func=cmd_create_user)
+
+    verify_email = sub.add_parser("verify-email", help="把已有用户的邮箱标记为已验证（运维兜底）")
+    verify_email.add_argument("--username", required=True)
+    verify_email.set_defaults(func=cmd_verify_email)
 
     listing = sub.add_parser("list-users", help="列出用户")
     listing.set_defaults(func=cmd_list_users)

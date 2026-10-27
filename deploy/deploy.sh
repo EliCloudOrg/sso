@@ -112,8 +112,18 @@ services:
       ACCESS_TOKEN_TTL: "3600"
       REFRESH_TOKEN_TTL: "2592000"
       ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-false}"
+      # ---- 注册邮箱验证（email 服务）----
+      EMAIL_SERVICE_BASE_URL: "${EMAIL_SERVICE_BASE_URL:-http://email:8000}"
+      EMAIL_INTERNAL_TOKEN: "${EMAIL_INTERNAL_TOKEN:-}"
+      EMAIL_CALLBACK_SECRET: "${EMAIL_CALLBACK_SECRET:-}"
+      EMAIL_CALLBACK_URL: "${EMAIL_CALLBACK_URL:-http://sso:8000/internal/email/verification}"
+      EMAIL_VERIFICATION_TTL_SECONDS: "${EMAIL_VERIFICATION_TTL_SECONDS:-900}"
+      EMAIL_RESEND_COOLDOWN_SECONDS: "${EMAIL_RESEND_COOLDOWN_SECONDS:-60}"
+      EMAIL_RECONCILE_SECONDS: "${EMAIL_RECONCILE_SECONDS:-5}"
+      EMAIL_HTTP_TIMEOUT_SECONDS: "${EMAIL_HTTP_TIMEOUT_SECONDS:-20}"
+      REGISTRATION_RETENTION_DAYS: "${REGISTRATION_RETENTION_DAYS:-1}"
       AUDIENCE: "elicloud-services"
-      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write mc:whitelist"
+      DEFAULT_SCOPE: "openid profile email pdf:read pdf:write mc:whitelist files:read files:write userinfo:read userinfo:write"
       # ⚠️ 这一行是本项目的**第二个真源**：app/config.py 里的 default_scope 是代码默认值，
       #    而环境变量会覆盖它。只改代码不改这里 → 线上签发的令牌里没有新 scope
       #    （2026-10-06 新增 mc:whitelist 时踩过：发现文档已声明、客户端也放行，

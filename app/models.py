@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Index, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .constants import (
@@ -72,17 +72,57 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    # 邮箱被证明属于该账号的时间；NULL 表示未验证（历史账号/管理员建号默认如此）。
+    email_verified_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
-    def to_public_dict(self) -> dict[str, str | None]:
+    @property
+    def email_verified(self) -> bool:
+        return bool(self.email and self.email_verified_at)
+
+    def to_public_dict(self) -> dict[str, str | bool | None]:
         """对外表示：绝不包含 password_hash 等内部字段。"""
         return {
             "id": self.id,
             "username": self.username,
             "email": self.email,
+            "email_verified": self.email_verified,
             "created_at": self.created_at,
         }
+
+
+class PendingRegistration(Base):
+    """待验证的自助注册：账号只在邮箱确认成功后才落到 ``users``。
+
+    刻意不提前创建 users 行：未验证的账号不应被刷新令牌、OIDC 或业务服务看到。
+    ``id`` 是状态查询/重发/取消的 capability（高熵随机串），不是用户 ID。
+    """
+
+    __tablename__ = "pending_registrations"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # reg_...
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    username_lower: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    email_lower: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)  # bcrypt，验证后复制
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    email_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_sent_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_reconciled_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    verified_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id"), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_pending_status_expires", "status", "expires_at"),
+        Index("ix_pending_email_created", "email_lower", "created_at"),
+    )
 
 
 class OAuthClient(Base):

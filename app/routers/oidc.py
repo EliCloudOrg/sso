@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session as DbSession
 
-from ..authentication import authenticate
+from ..authentication import EMAIL_NOT_VERIFIED_ERROR, authenticate
 from ..authorization import (
     AuthorizeFatalError,
     AuthorizeParams,
@@ -80,7 +80,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # 登录页上的失败提示：与 JSON 端点一样**不区分失败原因**（防枚举）
-GENERIC_LOGIN_ERROR = "用户名或密码错误"
+GENERIC_LOGIN_ERROR = "账号或密码错误"
 
 
 # ------------------------------------------------------------------ 渲染
@@ -335,15 +335,24 @@ def authorize_post(
         )
 
     try:
-        user = authenticate(db, username=username, password=password, ip=client_ip(request), settings=settings)
+        user = authenticate(db, identifier=username, password=password, ip=client_ip(request), settings=settings)
     except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
         if exc.status_code == 429:
-            detail = exc.detail if isinstance(exc.detail, dict) else {}
             return render_error_page(
                 request,
                 title="尝试过于频繁",
                 message=str(detail.get("error_description") or "请稍后再试"),
                 status_code=429,
+            )
+        if exc.status_code == 403 and detail.get("error") == EMAIL_NOT_VERIFIED_ERROR:
+            return _login_page(
+                request,
+                settings,
+                client,
+                params,
+                error="这个账号的邮箱还没有验证。请先在桌面客户端完成邮箱验证，然后再登录。",
+                username=username,
             )
         # 浏览器流程用页面表达失败，而不是返回裸 JSON
         logger.info("authorize login failed client=%s", client.client_id)
@@ -938,15 +947,22 @@ def device_post(
     # 1) 未登录 → 先在本页登录（登录成功后再回到 /device 输入短码）
     if user is None or user.status != "active":
         try:
-            user = authenticate(db, username=username, password=password, ip=client_ip(request), settings=settings)
+            user = authenticate(db, identifier=username, password=password, ip=client_ip(request), settings=settings)
         except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
             if exc.status_code == 429:
-                detail = exc.detail if isinstance(exc.detail, dict) else {}
                 return render_error_page(
                     request,
                     title="尝试过于频繁",
                     message=str(detail.get("error_description") or "请稍后再试"),
                     status_code=429,
+                )
+            if exc.status_code == 403 and detail.get("error") == EMAIL_NOT_VERIFIED_ERROR:
+                return _device_login_page(
+                    request,
+                    settings,
+                    user_code=user_code,
+                    error="这个账号的邮箱还没有验证。请先在桌面客户端完成邮箱验证，然后再登录。",
                 )
             return _device_login_page(request, settings, user_code=user_code, error=GENERIC_LOGIN_ERROR)
 

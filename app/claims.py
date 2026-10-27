@@ -20,8 +20,8 @@ def user_claims(user: User, scopes: Iterable[str]) -> dict[str, Any]:
     * ``profile`` → ``preferred_username``。**B2 决策：不再返回非标准的 ``username``**；
     * ``email``   → ``email`` + ``email_verified``。
 
-    ``email_verified`` 恒为 ``false``：本平台没有邮箱验证流程，
-    如实标注而不是假装已验证。客户端若要把它当可信邮箱使用，需要先引入验证流程。
+    ``email_verified`` 由 ``users.email_verified_at`` 决定：新注册必须完成邮箱
+    验证才会建号；历史账号有邮箱但没有验证时间，仍如实返回 ``false``。
     """
     scope_list = list(scopes)
     claims: dict[str, Any] = {"sub": user.id}
@@ -31,6 +31,6 @@ def user_claims(user: User, scopes: Iterable[str]) -> dict[str, Any]:
 
     if SCOPE_EMAIL in scope_list and user.email:
         claims["email"] = user.email
-        claims["email_verified"] = False
+        claims["email_verified"] = user.email_verified
 
     return claims

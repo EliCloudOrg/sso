@@ -11,3 +11,5 @@ SQLAlchemy>=2.0,<3.0
 jinja2>=3.1,<4.0
 # /token 与 /authorize 表单解析（application/x-www-form-urlencoded）
 python-multipart>=0.0.9,<1.0
+# 调用 email 服务的内部 API（注册验证）
+httpx>=0.27,<1.0

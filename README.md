@@ -37,8 +37,12 @@ sso/
 
 | 方法 | 服务内路径 | 对外路径（经网关） | 说明 |
 |---|---|---|---|
-| POST | `/v1/register` | `/auth/register` | 注册；`ALLOW_REGISTRATION=false` 时返回 403 |
-| POST | `/v1/login` | `/auth/login` | 签发 access + refresh token |
+| POST | `/v1/register` | `/auth/register` | 发起注册并发送验证邮件；返回 `202 {registration_id,...}`。`ALLOW_REGISTRATION=false` 时 403 |
+| POST | `/v1/register/status` | `/auth/register/status` | 查询待验证注册状态（pending / verified / expired / failed） |
+| POST | `/v1/register/resend` | `/auth/register/resend` | 重发验证邮件（60 秒冷却） |
+| POST | `/v1/register/cancel` | `/auth/register/cancel` | 取消待验证注册（204） |
+| POST | `/internal/email/verification` | （不经网关） | email 服务的 HMAC 回调；由 Docker 内网直连 |
+| POST | `/v1/login` | `/auth/login` | 签发 access + refresh token。请求体的 `username` 是**登录标识**：用户名或邮箱都可以（见下） |
 | POST | `/v1/refresh` | `/auth/refresh` | 轮换 refresh token |
 | GET/POST | `/v1/userinfo` | `/auth/userinfo` | 标准 UserInfo；**按 scope 过滤 claim**，只返回 `preferred_username` |
 | GET/POST | `/logout` | `/auth/logout` | 标准 RP-Initiated Logout（清会话、撤销该会话的链、按注册值回跳） |
@@ -55,7 +59,22 @@ sso/
 | GET | `/healthz` | （不经网关） | 容器内健康检查 |
 
 错误结构统一为 `{"error": "...", "error_description": "..."}`；
-状态码 `400/401/403/404/409/429`。请求/响应示例见 `docs/architecture.md` §5。
+状态码 `400/401/403/404/409/410/429/502/503`。注册相关示例见 `docs/registration-email.md`。
+
+**登录标识：用户名或邮箱。**
+`/v1/login` 与 OIDC 登录页（`/authorize`、`/device`）共用 `app/authentication.py::authenticate`，
+它按「先用户名、后邮箱」两种大小写不敏感的匹配定位账号（`find_user_by_identifier`）。
+注册时的 `username` 仍然**只能是用户名**（`validate_username` 的字符集不含 `@`），
+所以两种标识不会互相冒充，也不需要消歧。
+失败响应保持不变：三种失败原因（用户不存在 / 密码错 / 账号被禁用）统一是
+`401 invalid_grant` + `账号或密码错误`。
+密码正确但只存在待验证注册时，返回 `403 email_not_verified`，不下发令牌。
+
+**注册必须完成邮箱验证。** `/v1/register` 只写 `pending_registrations`，
+调 email 服务的 `POST /v1/verify` 发一键确认邮件；用户点击后 email 服务用 HMAC
+回调 `/internal/email/verification`，SSO 校验签名并在 `status=approved` 时创建
+`users` 行（写入 `email_verified_at`）。未确认前没有 `users` 行，也没有令牌。
+状态机与安全说明见 [`docs/registration-email.md`](docs/registration-email.md)。
 
 **注意网关做了重写，不是简单剥前缀**（外部路径没有 `/v1`，服务内路径有 `/v1`）：
 
@@ -79,8 +98,17 @@ sso/
 | `ACCESS_TOKEN_TTL` | `3600` | 秒 |
 | `REFRESH_TOKEN_TTL` | `2592000` | 秒（30 天） |
 | `AUDIENCE` | `elicloud-services` | JWT `aud` |
-| `DEFAULT_SCOPE` | `openid profile email pdf:read pdf:write mc:whitelist` | JWT `scope`；当前不是授权边界。**必须与 `app/config.py` 的 `default_scope` 一致**：环境变量会覆盖代码默认值，只改一处会让新 scope 签不出来（2026-10-06 新增 `mc:whitelist` 时踩过） |
-| `ALLOW_REGISTRATION` | `false` | 是否开放自助注册 |
+| `DEFAULT_SCOPE` | `openid profile email pdf:read pdf:write mc:whitelist files:read files:write userinfo:read userinfo:write` | JWT `scope`；当前不是授权边界。**必须与 `app/config.py` 的 `default_scope` 一致**：环境变量会覆盖代码默认值，只改一处会让新 scope 签不出来（2026-10-06 新增 `mc:whitelist` 时踩过；新增 `files:*` / `userinfo:*` 时同理） |
+| `ALLOW_REGISTRATION` | `false` | 是否开放自助注册。线上已为 `true`；现在注册会先发验证邮件，确认后才建号。收回 = 改回 `false` 并重新部署 |
+| `EMAIL_SERVICE_BASE_URL` | `http://email:8000` | email 服务内部 API 基址 |
+| `EMAIL_INTERNAL_TOKEN` | （空 = 注册 503） | email 内部接口 Bearer；必须与 email 的 `EMAIL_INTERNAL_TOKEN` 一致 |
+| `EMAIL_CALLBACK_SECRET` | （空 = 回调 503） | 回调 HMAC 密钥；必须与 email 的 `CALLBACK_SIGNING_SECRET` 一致 |
+| `EMAIL_CALLBACK_URL` | `http://sso:8000/internal/email/verification` | email 的回调地址（Docker 内网） |
+| `EMAIL_VERIFICATION_TTL_SECONDS` | `900` | 验证链接有效期；应与 email 的 `VERIFICATION_TTL_SECONDS` 对齐 |
+| `EMAIL_RESEND_COOLDOWN_SECONDS` | `60` | 重发冷却 |
+| `EMAIL_RECONCILE_SECONDS` | `5` | 状态查询主动对账 email 的节流 |
+| `EMAIL_HTTP_TIMEOUT_SECONDS` | `20` | 必须大于 email 的 SMTP 超时（生产 10 秒） |
+| `REGISTRATION_RETENTION_DAYS` | `1` | pending 终态保留天数 |
 | `LOGIN_ATTEMPTS_PER_WINDOW` | `10` | 同一 IP+用户名 在窗口内的登录尝试上限 |
 | `LOGIN_WINDOW_SECONDS` | `900` | 限流窗口（秒） |
 | `ADMIN_TOKEN` | （空 = 关闭） | 客户端管理接口 `/v1/clients` 的 Bearer 令牌；**未配置时整组接口返回 403** |
@@ -500,6 +528,50 @@ https://146.56.237.33/auth/login              -> 200/405（匿名，SSO）
 > 另注：被动端口段 `50000-50100` 目前**未对公网放行**（实测不可达），
 > 所以从公网用 FTP 仍然连不上数据通道；真要启用还得在云安全组放行该端口段。
 
+### ✅ 2026-10-06 开放自助注册
+
+`ALLOW_REGISTRATION` 已在 `/srv/sso/app.env` 改为 `true`（备份 `app.env.bak.20261006-211305`），
+经 `/srv/sso/deploy.sh prod` 重建容器生效：同镜像、数据卷不动，issuer 与已签发令牌**不受影响**，
+容器重建中断约 5 秒。
+
+实测（全部为公网请求）：
+
+```text
+POST https://146.56.237.33/auth/register                      -> 201 + user_0003
+      （改动前同一请求返回 403 registration_disabled）
+      探针账号 reg-probe-20261006，紧接着 POST /auth/v1/login：
+      response scope = openid profile email pdf:read pdf:write mc:whitelist files:read files:write userinfo:read userinfo:write
+      验完即 docker exec sso python -m app.cli set-status --username reg-probe-20261006 --status disabled
+POST https://146.56.237.33/auth/register  （用户名已存在）    -> 409 user_exists，不产生数据
+POST https://146.56.237.33/auth/v1/register                   -> 409（网关两条路径都通）
+OPTIONS Origin: http://localhost:3000                         -> 200 + access-control-allow-origin
+OPTIONS Origin: http://localhost:5173                         -> 400，无 allow-origin
+```
+
+> ⚠️ **后果（已与用户确认，属有意选择）**：自助建号**无邮箱验证、无管理员审批**，
+> 账号直接 `status=active`（`app/routers/auth.py` 的 `register()`），限流 20 次/小时/IP。
+> 建号后走密码直连 `POST /auth/v1/login`，令牌 scope 是全局 `DEFAULT_SCOPE`
+> （`openid profile email pdf:read pdf:write mc:whitelist files:read files:write userinfo:read userinfo:write`）；而按 `docs/mc.md` 第 31 行，
+> MC 白名单是**自助即时生效、无审批状态机** —— 即公网陌生人建号后可立刻把自己加进 MC 白名单。
+>
+> - **要收回**：`/srv/sso/app.env` 改回 `false` 并重新部署（一行）。
+> - **要「开放注册但不给特权 scope」**：得改代码（新增用户默认 scope 与 `DEFAULT_SCOPE` 分离）+ 重建镜像，不是配置项。
+> - **顺带**：`CORS_ORIGINS` 里没有 `http://localhost:5173`（Vite 默认端口，即 `elipese-web` 的开发地址）。
+>   前端本地开发时调 `/auth/v1/register`、`/auth/v1/login` 会被浏览器拦在预检，需把它加进 `/srv/sso/app.env`。
+
+### ✅ 2026-10-25 注册改为邮箱验证
+
+上面的「账号直接 active、无邮箱验证」已被本版本取代：
+
+- `POST /v1/register` 返回 `202` + `registration_id`，不再返回 `user`；
+- 只写 `pending_registrations`，不提前建 `users` 行；
+- 用户点击 email 服务的确认链接后，email 服务 HMAC 回调 SSO，SSO 才创建用户并写 `email_verified_at`；
+- 未验证前 `/v1/login` 返回 `403 email_not_verified`；
+- 现有历史账号不受影响，`email_verified` 如实为 `false`。
+
+完整契约、状态机、安全边界（为什么不用 `trusted?email=` 全局可信邮箱列表、
+为什么不用用户复制 token）见 [`docs/registration-email.md`](docs/registration-email.md)。
+
 ---
 
 ## 13. OIDC 客户端管理（`docs/sso-oidc.md` §5）
@@ -557,7 +629,7 @@ curl -s -H "Authorization: Bearer $TOKEN" https://146.56.237.33/auth/v1/clients
 | `client_id` | 2~64 位，以字母/数字开头，仅含字母、数字、`_ . : -` |
 | `redirect_uri` | 必须是**绝对 URI**、不得含 `#`；`http(s)` 必须带主机；拒绝 `javascript:` / `data:` / `file:` / `vbscript:`；自定义 scheme（如 `elipese://callback`）允许 |
 | 是否需要 `redirect_uri` | 只有含 `authorization_code` 的客户端才要求 |
-| `allowed_scopes` | 必须是平台支持集合的子集：`openid` `profile` `email` `offline_access` `pdf:read` `pdf:write`（保序保存，`openid` 打头） |
+| `allowed_scopes` | 必须是平台支持集合的子集：`openid` `profile` `email` `offline_access` `pdf:read` `pdf:write` `mc:whitelist` `files:read` `files:write` `userinfo:read` `userinfo:write`（保序保存，`openid` 打头） |
 | `allowed_grant_types` | 仅 `authorization_code` / `refresh_token` / `urn:ietf:params:oauth:grant-type:device_code` |
 | public 客户端 | `token_endpoint_auth_method` 只能是 `none`（认证靠 PKCE S256） |
 | confidential 客户端 | 必须是 `client_secret_basic` 或 `client_secret_post` |
@@ -759,8 +831,8 @@ iss / sub / aud=client_id / iat / exp(=iat+ID_TOKEN_TTL，默认 600s) / auth_ti
 
 - **只给标准名 `preferred_username`，不再返回非标准的 `username`**（B2 决策）。
 - 响应里还保留一个 `scope` 字段：它不是"用户 claim"，不受上面的过滤规则约束，保留是为了方便调用方自检。
-- **`email_verified` 恒为 `false`**：本平台没有邮箱验证流程，如实标注而不是假装已验证。
-  将来若要做"邮箱可信"，得先引入验证流程再把这里改成真实值。
+- **`email_verified` 由 `users.email_verified_at` 决定**：新注册必须完成邮箱验证才会建号，
+  因此为 `true`；历史账号/管理员建号没有验证时间，仍如实返回 `false`。
 - 账号没填邮箱时，即使 scope 里有 `email` 也**不返回** `email`/`email_verified`（不返回空串）。
 - `GET` 与 `POST` 都支持（OIDC 要求），两者返回体完全一致。
 

@@ -45,6 +45,10 @@ SCOPE_LABELS: dict[str, str] = {
     "pdf:read": "PDF 解密：查看任务",
     "pdf:write": "PDF 解密：提交任务",
     "mc:whitelist": "MC 白名单：提交游戏名",
+    "files:read": "文件服务：读取你的文件（含被授权的文件）",
+    "files:write": "文件服务：上传、删除文件与授权他人",
+    "userinfo:read": "个人资料：查看昵称、简介、头像和头图",
+    "userinfo:write": "个人资料：修改昵称、简介、头像和头图",
 }
 
 USER_CODE_RE = re.compile(rf"^[A-Z0-9]{{{USER_CODE_LENGTH}}}$")

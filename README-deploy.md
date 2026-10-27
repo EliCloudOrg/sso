@@ -187,7 +187,12 @@ gh variable set DEPLOY_MODE --body 'image'
 | `DEPLOY_MODE` | GitHub Variables（仓库级） | `image` → 阶段一构建推镜像 |
 | `PUBLIC_BASE_URL` | `/srv/sso/app.env` | **issuer / jwks_uri 的唯一来源**；当前为 `https://146.56.237.33/auth` |
 | `CORS_ORIGINS` | `/srv/sso/app.env` | 允许的浏览器来源（逗号分隔） |
-| `ALLOW_REGISTRATION` | `/srv/sso/app.env` | 是否开放自助注册（当前 `false`） |
+| `ALLOW_REGISTRATION` | `/srv/sso/app.env` | 是否开放自助注册（线上为 `true`；注册会先发邮箱验证，确认后才建号） |
+| `EMAIL_SERVICE_BASE_URL` | `/srv/sso/app.env` | email 内部 API 基址（生产 `http://email:8000`） |
+| `EMAIL_INTERNAL_TOKEN` | `/srv/sso/app.env`（600） | 与 email 的 `EMAIL_INTERNAL_TOKEN` 相同；`openssl rand -hex 32` |
+| `EMAIL_CALLBACK_SECRET` | `/srv/sso/app.env`（600） | 与 email 的 `CALLBACK_SIGNING_SECRET` 相同；`openssl rand -hex 32` |
+| `EMAIL_CALLBACK_URL` | `/srv/sso/app.env` | 生产 `http://sso:8000/internal/email/verification` |
+| `EMAIL_VERIFICATION_TTL_SECONDS` / `EMAIL_RESEND_COOLDOWN_SECONDS` | `/srv/sso/app.env`（可选） | 默认 900 / 60，建议与 email 对齐 |
 | `JWT_KID` | `/srv/sso/app.env` | 签名密钥标识，轮换密钥时改这里 |
 | `ADMIN_TOKEN` | `/srv/sso/app.env` | `/v1/clients` 管理接口的 Bearer 令牌；留空 = 该组接口关闭 |
 | `SSO_IMAGE_REPO` / `SSO_IMAGE_TAG` | `/srv/sso/app.env`（可选） | 覆盖镜像仓库/tag（默认 `ghcr.io/elicloudorg/sso:prod`） |
@@ -200,6 +205,20 @@ gh variable set DEPLOY_MODE --body 'image'
 
 规则：**部署环节的凭据只走 GitHub Secrets；应用运行时的变量只在服务器 `app.env`。**
 两边都不要写进仓库，也不要在 workflow 里 `echo` 出来。
+
+### 注册邮箱验证的部署顺序
+
+1. 先按 `email/README-deploy.md` 部署 `email` 服务（`/srv/email/app.env`、SMTP、`/email/*` Caddy 路由）。
+2. 在 `/srv/email/app.env` 确认 `CALLBACK_ALLOWED_HOSTS` 含 `sso`、`MAX_ACTIVE_PER_EMAIL=10`、`SMTP_TIMEOUT=10`。
+3. 在 `/srv/sso/app.env` 写：
+   ```ini
+   EMAIL_SERVICE_BASE_URL=http://email:8000
+   EMAIL_INTERNAL_TOKEN=<与 email 相同，openssl rand -hex 32>
+   EMAIL_CALLBACK_SECRET=<与 email 的 CALLBACK_SIGNING_SECRET 相同>
+   EMAIL_CALLBACK_URL=http://sso:8000/internal/email/verification
+   ```
+4. 再部署 SSO。`/internal/email/verification` 不在 `/auth/*` 下，Caddy 不会暴露；
+   只有同网络的 email 容器能直连 `http://sso:8000`。
 
 ## 日常发布流程
 
